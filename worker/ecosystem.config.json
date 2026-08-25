@@ -1,0 +1,16 @@
+{
+    "apps": [
+        {
+            "name": "agent-api",
+            "script": "main.py",
+            "interpreter": ".venv/bin/python",
+            "instances": 1,
+            "autorestart": true,
+            "watch": false,
+            "max_memory_restart": "512M",
+            "env_production": {
+                "APP_ENV": "production"
+            }
+        }
+    ]
+}

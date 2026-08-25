@@ -1,0 +1,82 @@
+services:
+    postgres:
+        image: postgres:16-alpine
+        container_name: postgres
+        restart: unless-stopped
+        environment:
+            POSTGRES_DB: speaktrace_db
+            POSTGRES_USER: piush
+            POSTGRES_PASSWORD: root_123_allmighty
+        ports:
+            - "5432:5432"
+        volumes:
+            - speaktrace_pg_data:/var/lib/postgresql/data
+            - ./init/init-uuid.sql:/docker-entrypoint-initdb.d/init-uuid.sql
+        networks:
+            - default_network
+
+    redis:
+        image: redis:8.2.2-alpine
+        container_name: redis
+        restart: unless-stopped
+        ports:
+            - "6379:6379"
+        volumes:
+            - speaktrace_redis_data:/data
+            - ./redis.conf:/usr/local/etc/redis/redis.conf
+            - ./logs:/var/log/redis
+        command:
+            [
+                "sh",
+                "-c",
+                "mkdir -p /var/log/redis && redis-server /usr/local/etc/redis/redis.conf",
+            ]
+        networks:
+            - default_network
+
+    rabbitmq:
+        image: rabbitmq:3.13-management-alpine
+        container_name: rabbitmq
+        restart: unless-stopped
+        ports:
+            - "5672:5672"   # AMQP protocol
+            - "15672:15672" # Management UI
+        environment:
+            RABBITMQ_DEFAULT_USER: speaktrace
+            RABBITMQ_DEFAULT_PASS: speaktrace_pass
+            RABBITMQ_DEFAULT_VHOST: speaktrace
+        volumes:
+            - speaktrace_rabbitmq_data:/var/lib/rabbitmq
+        healthcheck:
+            test: ["CMD", "rabbitmq-diagnostics", "ping"]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+        networks:
+            - default_network
+
+    bullmq-worker:
+        image: oven/bun:1.2.22
+        container_name: bullmq-worker
+        restart: unless-stopped
+        working_dir: /app
+        volumes:
+            - ../:/app
+        env_file:
+            - ../.env
+        command: [ "sh", "-c", "bun install --frozen-lockfile && bun run worker:start" ]
+        depends_on:
+            - redis
+            - postgres
+            - rabbitmq
+        networks:
+            - default_network
+
+volumes:
+    speaktrace_pg_data:
+    speaktrace_redis_data:
+    speaktrace_rabbitmq_data:
+
+networks:
+    default_network:
+        driver: bridge
