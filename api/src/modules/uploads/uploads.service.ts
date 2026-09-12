@@ -3,6 +3,7 @@ import { uploadToCloudinary } from "~/lib/cloudinary";
 import { publishMediaUploaded } from "~/lib/events";
 import { SystemSettingsService } from "~/modules/system/system_settings.service";
 import { createDebugProxy } from "~/shared/logging";
+import { jobsCreatedTotal, tokensDeductedTotal } from "~/shared/metrics/prometheus";
 import {
 	FileTooLargeError,
 	InsufficientCreditsError,
@@ -91,6 +92,14 @@ export interface IUploadsService {
 	listMediaAssets(userId: string, opts: { limit: number; offset: number }): Promise<{ assets: MediaAsset[]; total: number }>;
 	getJob(jobId: string, userId: string): Promise<ProcessingJob>;
 	listJobs(userId: string, opts: { limit: number; offset: number }): Promise<{ jobs: ProcessingJob[]; total: number }>;
+	submitSpeakerMappings(jobId: string, userId: string, mappings: Record<string, string>): Promise<void>;
+	getJobDetails(jobId: string, userId: string): Promise<{
+		job: ProcessingJob;
+		mediaAsset: MediaAsset;
+		speakers: unknown[];
+		transcripts: unknown[];
+	}>;
+	renameJob(jobId: string, newFilename: string, userId: string): Promise<{ success: boolean; filename: string }>;
 }
 
 // ─── Service ─────────────────────────────────────────────────────────────────
@@ -166,9 +175,7 @@ export class UploadsService implements IUploadsService {
 
 		// 6. Create processing job
 		const jobRow = await this.repo.createProcessingJob({
-			// If no tenant yet, use the user's own ID as a scoping key
-			// (will be replaced once tenant model is fully wired)
-			tenantId: opts.tenantId ?? userId,
+			tenantId: opts.tenantId ?? null,
 			projectId: opts.projectId ?? null,
 			mediaAssetId: assetRow.id,
 			createdBy: userId,
@@ -178,6 +185,8 @@ export class UploadsService implements IUploadsService {
 		// 7. Deduct credits atomically
 		try {
 			await this.settingsService.deductJobCredits(userId, costBreakdown.totalCredits, jobRow.id);
+			tokensDeductedTotal.inc(costBreakdown.totalCredits);
+			jobsCreatedTotal.inc({ mime_type: assetRow.mime_type });
 		} catch (err: unknown) {
 			const errorMsg = err instanceof Error ? err.message : String(err);
 			if (errorMsg.includes("INSUFFICIENT_CREDITS")) {
@@ -232,7 +241,72 @@ export class UploadsService implements IUploadsService {
 		};
 	}
 
+	async submitSpeakerMappings(jobId: string, userId: string, mappings: Record<string, string>): Promise<void> {
+		const job = await this.repo.findJobById(jobId, userId);
+		if (!job) throw new ProcessingJobNotFoundError();
+
+		// Save names to database
+		for (const [tag, name] of Object.entries(mappings)) {
+			await this.repo.updateSpeakerMapping(jobId, tag, name);
+		}
+
+		// Update job status to TRANSCRIPTION_IN_PROGRESS
+		await this.repo.updateJobStatus(jobId, "TRANSCRIPTION_IN_PROGRESS", {
+			currentStage: "TRANSCRIPTION_IN_PROGRESS",
+			progressPct: 70,
+		});
+
+		// Publish event to resume worker
+		const { publishSpeakerMappingSubmitted } = await import("~/lib/events");
+		publishSpeakerMappingSubmitted({
+			jobId,
+			correlationId: job.correlation_id,
+			tenantId: job.tenant_id,
+			projectId: job.project_id,
+			mappings,
+			exportFormat: (job.options as Record<string, string>)?.export_format ?? "vtt",
+			customTemplate: (job.options as Record<string, string>)?.custom_template,
+		});
+	}
+
+	async getJobDetails(jobId: string, userId: string): Promise<{
+		job: ProcessingJob;
+		mediaAsset: MediaAsset;
+		speakers: unknown[];
+		transcripts: unknown[];
+	}> {
+		const jobRow = await this.repo.findJobById(jobId, userId);
+		if (!jobRow) throw new ProcessingJobNotFoundError();
+
+		const assetRow = await this.repo.findMediaAssetById(jobRow.media_asset_id, userId);
+		if (!assetRow) throw new MediaAssetNotFoundError();
+
+		const [speakers, transcripts] = await Promise.all([
+			this.repo.getJobSpeakers(jobId),
+			this.repo.getJobTranscripts(jobId),
+		]);
+
+		return {
+			job: toProcessingJob(jobRow),
+			mediaAsset: toMediaAsset(assetRow),
+			speakers,
+			transcripts,
+		};
+	}
+
+	async renameJob(jobId: string, newFilename: string, userId: string): Promise<{ success: boolean; filename: string }> {
+		if (!newFilename || newFilename.trim().length === 0) {
+			throw new Error("Filename cannot be empty");
+		}
+		const success = await this.repo.renameMediaAssetByJobId(jobId, newFilename.trim(), userId);
+		if (!success) {
+			throw new Error("Recording not found or unauthorized");
+		}
+		return { success: true, filename: newFilename.trim() };
+	}
+
 	static withDebug(repo: IUploadsRepository): IUploadsService {
 		return createDebugProxy(new UploadsService(repo), "UploadsService");
 	}
 }
+

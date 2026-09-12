@@ -12,6 +12,10 @@ import { registerAuthEventListeners } from "~/modules/auth/auth.events";
 import { createDomainEventBus, type DomainEventBus } from "~/shared/events";
 import { closeQueueResources } from "~/shared/queue";
 import { setupSocketServer } from "~/shared/realtime";
+import { toNodeHandler } from "better-auth/node";
+import { auth } from "~/modules/auth/better-auth";
+import { setupWorkerEventConsumers } from "~/lib/event-consumers";
+import { metricsHandler, metricsMiddleware } from "~/shared/metrics/prometheus";
 import {
 	type AppDependencies,
 	audit_logger,
@@ -132,11 +136,24 @@ export class Server {
 
 	setupRoutes() {
 		const dependencies = this.getDependencies();
+
+		// Prometheus metrics scraper endpoint
+		this.app.get("/metrics", metricsHandler);
+
+		// Better Auth handler
+		this.app.use("/api/auth", toNodeHandler(auth.handler));
+
 		registerHttpRoutes(this.app, this.config.api_prefix, dependencies);
 		log.info(`[ROUTES] Mounted under ${this.config.api_prefix} (edit src/modules/index.ts to change)`);
+
+		// Setup event consumers for worker responses
+		setupWorkerEventConsumers(dependencies);
 	}
 
 	setupMiddlewares() {
+		// Record latency and request metrics for Prometheus
+		this.app.use(metricsMiddleware);
+
 		const middlewaresConfig = configManager.getMiddlewareConfig();
 		const securityConfig = configManager.getSecurityConfig();
 
@@ -173,17 +190,6 @@ export class Server {
 			);
 		}
 
-		if (securityConfig.rate_limit.enabled) {
-			this.app.use(
-				rateLimit({
-					windowMs: securityConfig.rate_limit.window_ms,
-					max: securityConfig.rate_limit.max_requests,
-					standardHeaders: true,
-					legacyHeaders: false,
-				}),
-			);
-		}
-
 		if (securityConfig.cors.enabled) {
 			this.app.use(
 				cors({
@@ -191,6 +197,33 @@ export class Server {
 					credentials: true,
 					allowedHeaders: ["Content-Type", "Authorization"],
 					methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+				}),
+			);
+		}
+
+		if (securityConfig.rate_limit.enabled) {
+			this.app.use(
+				rateLimit({
+					windowMs: securityConfig.rate_limit.window_ms,
+					max: securityConfig.rate_limit.max_requests,
+					standardHeaders: true,
+					legacyHeaders: false,
+					skip: (req) => {
+						// Never rate-limit CORS preflight OPTIONS requests
+						if (req.method === "OPTIONS") return true;
+						if (securityConfig.rate_limit.skip_localhost) {
+							const ip = req.ip || req.socket.remoteAddress || "";
+							if (
+								ip === "127.0.0.1" ||
+								ip === "::1" ||
+								ip === "::ffff:127.0.0.1" ||
+								req.hostname === "localhost"
+							) {
+								return true;
+							}
+						}
+						return false;
+					},
 				}),
 			);
 		}

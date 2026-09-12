@@ -2,6 +2,7 @@ import type { Server as HTTPServer } from "node:http";
 import { Server as SocketIOServer } from "socket.io";
 import type { DomainEventBus } from "~/shared/events";
 import { log } from "~/shared/middlewares";
+import { activeWebSocketsGauge } from "~/shared/metrics/prometheus";
 
 interface SetupSocketServerInput {
 	eventBus: DomainEventBus;
@@ -21,6 +22,7 @@ export const setupSocketServer = ({ eventBus, origins, path, server }: SetupSock
 	});
 
 	io.on("connection", (socket) => {
+		activeWebSocketsGauge.inc();
 		log.info(`[SOCKET] Client connected: ${socket.id}`);
 		socket.emit("system:hello", {
 			message: "Connected to realtime server",
@@ -35,7 +37,21 @@ export const setupSocketServer = ({ eventBus, origins, path, server }: SetupSock
 			});
 		});
 
+		socket.on("join:project", (projectId: string) => {
+			socket.join(`project:${projectId}`);
+			log.info(`[SOCKET] Client ${socket.id} joined room: project:${projectId}`);
+			socket.emit("system:info", {
+				message: `Joined room for project ${projectId}`,
+			});
+		});
+
+		socket.on("leave:project", (projectId: string) => {
+			socket.leave(`project:${projectId}`);
+			log.info(`[SOCKET] Client ${socket.id} left room: project:${projectId}`);
+		});
+
 		socket.on("disconnect", (reason) => {
+			activeWebSocketsGauge.dec();
 			log.info(`[SOCKET] Client disconnected: ${socket.id} (${reason})`);
 		});
 	});
@@ -54,6 +70,10 @@ export const setupSocketServer = ({ eventBus, origins, path, server }: SetupSock
 		io.emit("job:progress", payload);
 		// Broadcast to job-specific room
 		io.to(`job:${payload.jobId}`).emit("job:progress", payload);
+		// Broadcast to project-specific room if projectId is present
+		if (payload.projectId) {
+			io.to(`project:${payload.projectId}`).emit("job:progress", payload);
+		}
 	});
 
 	return io;

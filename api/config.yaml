@@ -12,11 +12,13 @@ security:
         enabled: true
         origins:
             - http://localhost:3000
+            - http://127.0.0.1:3000
             - http://localhost:5173
+            - http://127.0.0.1:5173
     rate_limit:
         enabled: true
         window_ms: 900000
-        max_requests: 100
+        max_requests: 5000
         skip_localhost: true
 
 database:
@@ -46,7 +48,7 @@ middlewares:
     rate_limit:
         enabled: true
         window_ms: 1000
-        max_requests: 5
+        max_requests: 100
         skip_localhost: true
 
 documentation:

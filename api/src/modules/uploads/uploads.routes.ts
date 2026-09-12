@@ -58,6 +58,18 @@ export function createUploadsRouter(dependencies: UploadsModuleDependencies = {}
 	// GET /uploads/jobs/:jobId — get a single processing job
 	router.get("/jobs/:jobId", controller.getJob);
 
+	// GET /uploads/jobs/:jobId/details — get job with speakers and transcripts
+	router.get("/jobs/:jobId/details", controller.getJobDetails);
+
+	// POST /uploads/jobs/:jobId/speakers — submit user assigned speaker names
+	router.post("/jobs/:jobId/speakers", controller.submitSpeakerMappings);
+
+	// PATCH /uploads/jobs/:jobId/rename — rename media asset filename
+	router.patch("/jobs/:jobId/rename", controller.renameJob);
+
+	// GET /uploads/jobs/:jobId/events — Server-Sent Events stream for job progress
+	router.get("/jobs/:jobId/events", controller.streamJobEvents);
+
 	// GET /uploads/:assetId — get a single media asset
 	router.get("/:assetId", controller.getAsset);
 

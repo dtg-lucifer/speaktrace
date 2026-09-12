@@ -1,0 +1,9 @@
+**/*/chroma*/*
+**/*/logs/*
+**/__pycache__/*
+**/data/*
+**/*/*.env
+**/*/node_modules/*
+**/*/dist
+**/*/build
+**/*.d.ts

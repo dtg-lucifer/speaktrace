@@ -11,9 +11,12 @@ export interface DomainEventMap {
 		jobId: string;
 		correlationId: string;
 		tenantId: string | null;
+		projectId?: string | null;
 		status: string;
 		progressPct: number;
 		currentStage: string | null;
+		errorMessage?: string | null;
+		speakers?: unknown[];
 	};
 	"media.uploaded": {
 		jobId: string;
@@ -24,6 +27,25 @@ export interface DomainEventMap {
 		storageUrl: string;
 		mimeType: string;
 		options: Record<string, unknown>;
+	};
+	"speaker.mapping.submitted": {
+		jobId: string;
+		correlationId: string;
+		tenantId: string | null;
+		projectId: string | null;
+		mappings: Record<string, string>;
+		exportFormat?: string;
+		customTemplate?: string;
+	};
+	"diarization.completed": {
+		jobId: string;
+		speakers: unknown[];
+	};
+	"transcription.completed": {
+		jobId: string;
+		format: string;
+		transcriptText: string;
+		storageUrl?: string;
 	};
 }
 

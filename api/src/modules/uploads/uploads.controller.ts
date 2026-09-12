@@ -28,15 +28,25 @@ export class UploadsController {
 		}
 
 		const query = req.query as unknown as UploadQueryInput;
+		const projectId = (req.body?.projectId as string) || query.projectId;
+
+		let jobOptions: Record<string, unknown> = {
+			emotionTagging: query.emotionTagging,
+			punctuation: query.punctuation,
+			language: query.language,
+		};
+
+		if (req.body?.jobOptions) {
+			try {
+				const parsed = typeof req.body.jobOptions === "string" ? JSON.parse(req.body.jobOptions) : req.body.jobOptions;
+				jobOptions = { ...jobOptions, ...parsed };
+			} catch {}
+		}
 
 		const result = await this.service.uploadMedia(userId, file, {
-			projectId: query.projectId,
+			projectId,
 			tenantId: req.user?.tenantId,
-			jobOptions: {
-				emotionTagging: query.emotionTagging,
-				punctuation: query.punctuation,
-				language: query.language,
-			},
+			jobOptions,
 		});
 
 		createdResponse(res, result, "File uploaded and processing job created");
@@ -108,6 +118,80 @@ export class UploadsController {
 		const job = await this.service.getJob(jobId, userId);
 		successResponse(res, { job }, "Processing job retrieved");
 	});
+
+	// ── GET /uploads/jobs/:jobId/details ─────────────────────────────────────
+
+	getJobDetails = asyncHandler(async (req: Request, res: Response) => {
+		const userId = req.user?.id;
+		if (!userId) {
+			throw new BadRequestError("User not authenticated", ErrorCode.UNAUTHORIZED);
+		}
+
+		const { jobId } = req.params as { jobId: string };
+		const details = await this.service.getJobDetails(jobId, userId);
+		successResponse(res, details, "Processing job details retrieved");
+	});
+
+	// ── POST /uploads/jobs/:jobId/speakers ───────────────────────────────────
+
+	submitSpeakerMappings = asyncHandler(async (req: Request, res: Response) => {
+		const userId = req.user?.id;
+		if (!userId) {
+			throw new BadRequestError("User not authenticated", ErrorCode.UNAUTHORIZED);
+		}
+
+		const { jobId } = req.params as { jobId: string };
+		const { mappings } = req.body as { mappings: Record<string, string> };
+
+		if (!mappings || typeof mappings !== "object") {
+			throw new BadRequestError("Speaker mappings object is required", ErrorCode.BAD_REQUEST);
+		}
+
+		await this.service.submitSpeakerMappings(jobId, userId, mappings);
+		successResponse(res, { success: true }, "Speaker mappings submitted, transcription resuming");
+	});
+
+	// ── PATCH /uploads/jobs/:jobId/rename ───────────────────────────────────
+
+	renameJob = asyncHandler(async (req: Request, res: Response) => {
+		const userId = req.user?.id;
+		if (!userId) {
+			throw new BadRequestError("User not authenticated", ErrorCode.UNAUTHORIZED);
+		}
+		const { jobId } = req.params as { jobId: string };
+		const { filename } = req.body as { filename: string };
+		const result = await this.service.renameJob(jobId, filename, userId);
+		successResponse(res, result, "Audio recording renamed successfully");
+	});
+
+	// ── GET /uploads/jobs/:jobId/events (SSE) ────────────────────────────────
+
+	streamJobEvents = (req: Request, res: Response): void => {
+		const { jobId } = req.params as { jobId: string };
+
+		res.setHeader("Content-Type", "text/event-stream");
+		res.setHeader("Cache-Control", "no-cache");
+		res.setHeader("Connection", "keep-alive");
+		res.flushHeaders?.();
+
+		// Initial connection ping
+		res.write(`data: ${JSON.stringify({ event: "connected", jobId })}\n\n`);
+
+		const { eventBus } = require("~/shared/events");
+
+		const onProgress = (data: { jobId: string; [key: string]: unknown }) => {
+			if (data.jobId === jobId) {
+				res.write(`data: ${JSON.stringify(data)}\n\n`);
+			}
+		};
+
+		eventBus.on("job.progress.updated", onProgress);
+
+		req.on("close", () => {
+			eventBus.off("job.progress.updated", onProgress);
+			res.end();
+		});
+	};
 
 	// ── Multer error handler ─────────────────────────────────────────────────
 

@@ -42,7 +42,7 @@ export class AuthService implements IAuthService {
 		}
 
 		// Fetch default initial free credits from system settings
-		const defaultCredits = await this.settingsService.getSettingByKey<number>("default_free_credits", 100);
+		const defaultCredits = await this.settingsService.getSettingByKey<number>("default_free_credits", 50);
 
 		const passwordHash = await hashPassword(input.password);
 		const user = await this.authRepository.createWithAudit({

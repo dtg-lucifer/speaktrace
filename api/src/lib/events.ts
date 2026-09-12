@@ -128,3 +128,54 @@ export function publishJobProgress(params: {
 		rabbitMQ.publish("job.progress.updated", envelope);
 	}
 }
+
+/**
+ * Published when user submits speaker names for a diarized job.
+ * Worker resumes transcription with user names mapped to speaker voices.
+ */
+export function publishSpeakerMappingSubmitted(params: {
+	jobId: string;
+	correlationId: string;
+	tenantId: string | null;
+	projectId: string | null;
+	mappings: Record<string, string>;
+	exportFormat?: string;
+	customTemplate?: string;
+}): void {
+	eventBus.emit("speaker.mapping.submitted", params);
+
+	const envelope = buildEnvelope(
+		{
+			eventType: "speaker.mapping.submitted",
+			jobId: params.jobId,
+			correlationId: params.correlationId,
+			tenantId: params.tenantId,
+			projectId: params.projectId,
+		},
+		{
+			mappings: params.mappings,
+			export_format: params.exportFormat ?? "vtt",
+			custom_template: params.customTemplate,
+			project_id: params.projectId,
+		},
+	);
+
+	if (env.QUEUE_PROVIDER === "bullmq") {
+		const queueProvider = getQueueProvider();
+		queueProvider
+			.enqueue({
+				queue: "speaker.mapping.submitted",
+				name: "speaker.mapping.submitted",
+				data: envelope,
+				deduplicationId: `map_${params.jobId}`,
+			})
+			.catch((err) => {
+				logger.error(`[EVENTS] BullMQ enqueue failed for speaker mapping ${params.jobId}`, { err });
+			});
+		logger.info(`[EVENTS:BULLMQ] Enqueued speaker.mapping.submitted for job ${params.jobId}`);
+	} else {
+		rabbitMQ.publish("speaker.mapping.submitted", envelope);
+		logger.info(`[EVENTS:RABBITMQ] Published speaker.mapping.submitted for job ${params.jobId}`);
+	}
+}
+

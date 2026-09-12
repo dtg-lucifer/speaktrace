@@ -34,7 +34,7 @@ export interface MediaAsset {
 
 export interface ProcessingJob {
 	id: string;
-	tenantId: string;
+	tenantId: string | null;
 	projectId: string | null;
 	mediaAssetId: string;
 	createdBy: string;

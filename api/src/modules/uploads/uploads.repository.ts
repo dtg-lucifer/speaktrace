@@ -40,7 +40,7 @@ const MediaAssetRowSchema = z.object({
 
 const ProcessingJobRowSchema = z.object({
 	id: z.string().uuid(),
-	tenant_id: z.string().uuid(),
+	tenant_id: z.string().uuid().nullable(),
 	project_id: z.string().uuid().nullable(),
 	media_asset_id: z.string().uuid(),
 	created_by: z.string().uuid(),
@@ -78,15 +78,15 @@ export interface IUploadsRepository {
 	listMediaAssets(userId: string, opts: { limit: number; offset: number }): Promise<{ assets: MediaAssetRow[]; total: number }>;
 	updateMediaAssetStatus(id: string, status: MediaAssetStatus): Promise<void>;
 	createProcessingJob(input: {
-		tenantId: string;
+		tenantId: string | null;
 		projectId: string | null;
 		mediaAssetId: string;
 		createdBy: string;
 		options: JobOptions;
 	}): Promise<ProcessingJobRow>;
-	findJobById(id: string, userId: string): Promise<ProcessingJobRow | null>;
+	findJobById(id: string, userId?: string): Promise<ProcessingJobRow | null>;
 	listJobsForUser(userId: string, opts: { limit: number; offset: number }): Promise<{ jobs: ProcessingJobRow[]; total: number }>;
-	findJobByMediaAssetId(mediaAssetId: string, userId: string): Promise<ProcessingJobRow | null>;
+	findJobByMediaAssetId(mediaAssetId: string, userId?: string): Promise<ProcessingJobRow | null>;
 	updateJobStatus(
 		id: string,
 		status: ProcessingJobStatus,
@@ -97,6 +97,21 @@ export interface IUploadsRepository {
 			errorStage?: string;
 		},
 	): Promise<void>;
+	saveSpeakerSnippets(
+		jobId: string,
+		speakers: Array<{ speakerTag: string; snippetUrl: string; durationSeconds?: number }>,
+	): Promise<void>;
+	getJobSpeakers(jobId: string): Promise<Array<{ id: string; speaker_tag: string; snippet_url: string; duration_seconds: number; assigned_name: string | null }>>;
+	updateSpeakerMapping(jobId: string, speakerTag: string, assignedName: string): Promise<void>;
+	saveTranscript(data: {
+		jobId: string;
+		projectId: string | null;
+		format: string;
+		contentText: string;
+		storageUrl?: string;
+	}): Promise<void>;
+	getJobTranscripts(jobId: string): Promise<Array<{ id: string; format: string; content_text: string; storage_url: string | null; created_at: Date }>>;
+	renameMediaAssetByJobId(jobId: string, newFilename: string, userId: string): Promise<boolean>;
 }
 
 // ─── Repository ─────────────────────────────────────────────────────────────
@@ -167,7 +182,7 @@ export class UploadsRepository extends BaseRepository implements IUploadsReposit
 	// ── Processing Jobs ───────────────────────────────────────────────────
 
 	async createProcessingJob(input: {
-		tenantId: string;
+		tenantId: string | null;
 		projectId: string | null;
 		mediaAssetId: string;
 		createdBy: string;
@@ -186,11 +201,12 @@ export class UploadsRepository extends BaseRepository implements IUploadsReposit
 		return ProcessingJobRowSchema.parse(row);
 	}
 
-	async findJobById(id: string, userId: string): Promise<ProcessingJobRow | null> {
-		const rows = await this.db.query<ProcessingJobRow>(`SELECT * FROM processing_jobs WHERE id = $1 AND created_by = $2 LIMIT 1`, [
-			id,
-			userId,
-		]);
+	async findJobById(id: string, userId?: string): Promise<ProcessingJobRow | null> {
+		const query = userId
+			? `SELECT * FROM processing_jobs WHERE id = $1 AND created_by = $2 LIMIT 1`
+			: `SELECT * FROM processing_jobs WHERE id = $1 LIMIT 1`;
+		const params = userId ? [id, userId] : [id];
+		const rows = await this.db.query<ProcessingJobRow>(query, params);
 		const row = rows[0];
 		return row ? ProcessingJobRowSchema.parse(row) : null;
 	}
@@ -213,13 +229,12 @@ export class UploadsRepository extends BaseRepository implements IUploadsReposit
 		};
 	}
 
-	async findJobByMediaAssetId(mediaAssetId: string, userId: string): Promise<ProcessingJobRow | null> {
-		const rows = await this.db.query<ProcessingJobRow>(
-			`SELECT * FROM processing_jobs
-             WHERE media_asset_id = $1 AND created_by = $2
-             LIMIT 1`,
-			[mediaAssetId, userId],
-		);
+	async findJobByMediaAssetId(mediaAssetId: string, userId?: string): Promise<ProcessingJobRow | null> {
+		const query = userId
+			? `SELECT * FROM processing_jobs WHERE media_asset_id = $1 AND created_by = $2 LIMIT 1`
+			: `SELECT * FROM processing_jobs WHERE media_asset_id = $1 LIMIT 1`;
+		const params = userId ? [mediaAssetId, userId] : [mediaAssetId];
+		const rows = await this.db.query<ProcessingJobRow>(query, params);
 		const row = rows[0];
 		return row ? ProcessingJobRowSchema.parse(row) : null;
 	}
@@ -245,5 +260,72 @@ export class UploadsRepository extends BaseRepository implements IUploadsReposit
               WHERE id = $6`,
 			[status, extra?.currentStage ?? null, extra?.progressPct ?? null, extra?.errorMessage ?? null, extra?.errorStage ?? null, id],
 		);
+	}
+
+	async saveSpeakerSnippets(
+		jobId: string,
+		speakers: Array<{ speakerTag: string; snippetUrl: string; durationSeconds?: number }>,
+	): Promise<void> {
+		for (const spk of speakers) {
+			await this.db.query(
+				`INSERT INTO job_speakers (job_id, speaker_tag, snippet_url, duration_seconds, created_at, updated_at)
+				 VALUES ($1, $2, $3, $4, NOW(), NOW())
+				 ON CONFLICT DO NOTHING`,
+				[jobId, spk.speakerTag, spk.snippetUrl, spk.durationSeconds ?? 3.0],
+			);
+		}
+	}
+
+	async getJobSpeakers(jobId: string): Promise<Array<{ id: string; speaker_tag: string; snippet_url: string; duration_seconds: number; assigned_name: string | null }>> {
+		return this.db.query(
+			`SELECT id, speaker_tag, snippet_url, duration_seconds, assigned_name
+			 FROM job_speakers
+			 WHERE job_id = $1
+			 ORDER BY speaker_tag ASC`,
+			[jobId],
+		);
+	}
+
+	async updateSpeakerMapping(jobId: string, speakerTag: string, assignedName: string): Promise<void> {
+		await this.db.query(
+			`UPDATE job_speakers
+			 SET assigned_name = $1, updated_at = NOW()
+			 WHERE job_id = $2 AND speaker_tag = $3`,
+			[assignedName, jobId, speakerTag],
+		);
+	}
+
+	async saveTranscript(data: {
+		jobId: string;
+		projectId: string | null;
+		format: string;
+		contentText: string;
+		storageUrl?: string;
+	}): Promise<void> {
+		await this.db.query(
+			`INSERT INTO transcripts (job_id, project_id, format, content_text, storage_url, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, $5, NOW(), NOW())`,
+			[data.jobId, data.projectId, data.format, data.contentText, data.storageUrl ?? null],
+		);
+	}
+
+	async getJobTranscripts(jobId: string): Promise<Array<{ id: string; format: string; content_text: string; storage_url: string | null; created_at: Date }>> {
+		return this.db.query(
+			`SELECT id, format, content_text, storage_url, created_at
+			 FROM transcripts
+			 WHERE job_id = $1
+			 ORDER BY created_at DESC`,
+			[jobId],
+		);
+	}
+
+	async renameMediaAssetByJobId(jobId: string, newFilename: string, userId: string): Promise<boolean> {
+		const res = await this.db.query(
+			`UPDATE media_assets SET original_filename = $1, updated_at = NOW()
+			 WHERE id = (SELECT media_asset_id FROM processing_jobs WHERE id = $2)
+			 RETURNING id`,
+			[newFilename.trim(), jobId],
+		);
+		return (res.length ?? 0) > 0;
 	}
 }

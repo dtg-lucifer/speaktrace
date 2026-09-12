@@ -40,12 +40,12 @@ export class SystemSettingsService implements ISystemSettingsService {
 
 		// Default fallbacks if empty
 		return {
-			default_free_credits: settings.default_free_credits ?? 100,
-			credit_cost_per_minute_transcription: settings.credit_cost_per_minute_transcription ?? 2,
-			credit_cost_per_minute_diarization: settings.credit_cost_per_minute_diarization ?? 3,
-			credit_cost_per_minute_enrichment: settings.credit_cost_per_minute_enrichment ?? 2,
-			credit_cost_rag_indexing: settings.credit_cost_rag_indexing ?? 5,
-			credit_cost_export: settings.credit_cost_export ?? 1,
+			default_free_credits: settings.default_free_credits ?? 50,
+			credit_cost_per_minute_transcription: settings.credit_cost_per_minute_transcription ?? 10,
+			credit_cost_per_minute_diarization: settings.credit_cost_per_minute_diarization ?? 0,
+			credit_cost_per_minute_enrichment: settings.credit_cost_per_minute_enrichment ?? 0,
+			credit_cost_rag_indexing: settings.credit_cost_rag_indexing ?? 0,
+			credit_cost_export: settings.credit_cost_export ?? 0,
 			...settings,
 		};
 	}

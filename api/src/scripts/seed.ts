@@ -17,20 +17,20 @@ async function seed() {
 		// 1. Seed system_settings
 		console.log("⚙️  Seeding system_settings...");
 		const defaultSettings = [
-			{ key: "default_free_credits", value: 100, description: "Default initial free credits for new user self-registration" },
+			{ key: "default_free_credits", value: 50, description: "Default initial free credits for new user self-registration" },
 			{
 				key: "credit_cost_per_minute_transcription",
-				value: 2,
+				value: 10,
 				description: "Credit cost per minute of audio speech-to-text transcription",
 			},
-			{ key: "credit_cost_per_minute_diarization", value: 3, description: "Credit cost per minute of audio speaker diarization" },
+			{ key: "credit_cost_per_minute_diarization", value: 0, description: "Credit cost per minute of audio speaker diarization" },
 			{
 				key: "credit_cost_per_minute_enrichment",
-				value: 2,
+				value: 0,
 				description: "Credit cost per minute of audio emotion & punctuation tagging",
 			},
-			{ key: "credit_cost_rag_indexing", value: 5, description: "Fixed credit cost per job for vector RAG indexing" },
-			{ key: "credit_cost_export", value: 1, description: "Credit cost per custom document export rendering" },
+			{ key: "credit_cost_rag_indexing", value: 0, description: "Fixed credit cost per job for vector RAG indexing" },
+			{ key: "credit_cost_export", value: 0, description: "Credit cost per custom document export rendering" },
 		];
 
 		for (const setting of defaultSettings) {
@@ -59,7 +59,7 @@ async function seed() {
 				password: "user123456",
 				role: "member",
 				plan: "free",
-				credits: 100.0,
+				credits: 50.0,
 			},
 			{
 				email: "paid@speaktrace.com",
@@ -67,6 +67,13 @@ async function seed() {
 				role: "member",
 				plan: "pro",
 				credits: 1000.0,
+			},
+			{
+				email: "test@speaktrace.com",
+				password: "test123456",
+				role: "member",
+				plan: "enterprise",
+				credits: 10000.0,
 			},
 		];
 
